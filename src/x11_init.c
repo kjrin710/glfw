@@ -1549,11 +1549,18 @@ int _glfwInitX11(void)
     }
 
     _glfwPollMonitorsX11();
+
+    // Initialize evdev-based keyboard/mouse input (lower latency)
+    _glfwInitEvdevInput();
+
     return GLFW_TRUE;
 }
 
 void _glfwTerminateX11(void)
 {
+    // Terminate evdev input before closing X11 display
+    _glfwTerminateEvdevInput();
+
     if (_glfw.x11.helperWindowHandle)
     {
         if (XGetSelectionOwner(_glfw.x11.display, _glfw.x11.CLIPBOARD) ==

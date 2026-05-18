@@ -64,6 +64,11 @@ if (GLFW_BUILD_X11 OR GLFW_BUILD_WAYLAND)
     target_sources(glfw PRIVATE posix_poll.h posix_poll.c)
 endif()
 
+# Build evdev input backend when building for X11 on Linux
+if (GLFW_BUILD_X11 AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(glfw PRIVATE evdev_input.h evdev_input.c)
+endif()
+
 if (GLFW_BUILD_WAYLAND)
     include(CheckIncludeFiles)
     include(CheckFunctionExists)

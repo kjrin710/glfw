@@ -117,6 +117,13 @@
  #define GLFW_LINUX_LIBRARY_JOYSTICK_STATE
 #endif
 
+#if defined(_GLFW_X11) && defined(__linux__)
+ #include "evdev_input.h"
+#else
+ #define GLFW_EVDEV_STATE
+ #define GLFW_EVDEV_LIBRARY_STATE
+#endif
+
 #define GLFW_PLATFORM_WINDOW_STATE \
         GLFW_WIN32_WINDOW_STATE \
         GLFW_COCOA_WINDOW_STATE \

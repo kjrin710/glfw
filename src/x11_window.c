@@ -1149,14 +1149,9 @@ static void releaseMonitor(_GLFWwindow* window)
 //
 static void processEvent(XEvent *event)
 {
-    int keycode = 0;
-    Bool filtered = False;
-
-    // HACK: Save scancode as some IMs clear the field in XFilterEvent
-    if (event->type == KeyPress || event->type == KeyRelease)
-        keycode = event->xkey.keycode;
-
-    filtered = XFilterEvent(event, None);
+    // Evdev handles keyboard/mouse input; XFilterEvent still needed for
+    // XIM IPC and ClientMessage filtering
+    Bool filtered = XFilterEvent(event, None);
 
     if (_glfw.x11.randr.available)
     {
@@ -1184,39 +1179,7 @@ static void processEvent(XEvent *event)
 
     if (event->type == GenericEvent)
     {
-        if (_glfw.x11.xi.available)
-        {
-            _GLFWwindow* window = _glfw.x11.disabledCursorWindow;
-
-            if (window &&
-                window->rawMouseMotion &&
-                event->xcookie.extension == _glfw.x11.xi.majorOpcode &&
-                XGetEventData(_glfw.x11.display, &event->xcookie) &&
-                event->xcookie.evtype == XI_RawMotion)
-            {
-                XIRawEvent* re = event->xcookie.data;
-                if (re->valuators.mask_len)
-                {
-                    const double* values = re->raw_values;
-                    double xpos = window->virtualCursorPosX;
-                    double ypos = window->virtualCursorPosY;
-
-                    if (XIMaskIsSet(re->valuators.mask, 0))
-                    {
-                        xpos += *values;
-                        values++;
-                    }
-
-                    if (XIMaskIsSet(re->valuators.mask, 1))
-                        ypos += *values;
-
-                    _glfwInputCursorPos(window, xpos, ypos);
-                }
-            }
-
-            XFreeEventData(_glfw.x11.display, &event->xcookie);
-        }
-
+        // Evdev handles raw mouse motion; X11 GenericEvent input path frozen
         return;
     }
 
@@ -1246,186 +1209,25 @@ static void processEvent(XEvent *event)
 
         case KeyPress:
         {
-            const int key = translateKey(keycode);
-            const int mods = translateState(event->xkey.state);
-            const int plain = !(mods & (GLFW_MOD_CONTROL | GLFW_MOD_ALT));
-
-            if (window->x11.ic)
-            {
-                // HACK: Do not report the key press events duplicated by XIM
-                //       Duplicate key releases are filtered out implicitly by
-                //       the GLFW key repeat logic in _glfwInputKey
-                //       A timestamp per key is used to handle simultaneous keys
-                // NOTE: Always allow the first event for each key through
-                //       (the server never sends a timestamp of zero)
-                // NOTE: Timestamp difference is compared to handle wrap-around
-                Time diff = event->xkey.time - window->x11.keyPressTimes[keycode];
-                if (diff == event->xkey.time || (diff > 0 && diff < ((Time)1 << 31)))
-                {
-                    if (keycode)
-                        _glfwInputKey(window, key, keycode, GLFW_PRESS, mods);
-
-                    window->x11.keyPressTimes[keycode] = event->xkey.time;
-                }
-
-                if (!filtered)
-                {
-                    int count;
-                    Status status;
-                    char buffer[100];
-                    char* chars = buffer;
-
-                    count = Xutf8LookupString(window->x11.ic,
-                                              &event->xkey,
-                                              buffer, sizeof(buffer) - 1,
-                                              NULL, &status);
-
-                    if (status == XBufferOverflow)
-                    {
-                        chars = _glfw_calloc(count + 1, 1);
-                        count = Xutf8LookupString(window->x11.ic,
-                                                  &event->xkey,
-                                                  chars, count,
-                                                  NULL, &status);
-                    }
-
-                    if (status == XLookupChars || status == XLookupBoth)
-                    {
-                        const char* c = chars;
-                        chars[count] = '\0';
-                        while (c - chars < count)
-                            _glfwInputChar(window, decodeUTF8(&c), mods, plain);
-                    }
-
-                    if (chars != buffer)
-                        _glfw_free(chars);
-                }
-            }
-            else
-            {
-                KeySym keysym;
-                XLookupString(&event->xkey, NULL, 0, &keysym, NULL);
-
-                _glfwInputKey(window, key, keycode, GLFW_PRESS, mods);
-
-                const uint32_t codepoint = _glfwKeySym2UnicodeX11(keysym);
-                if (codepoint != GLFW_INVALID_CODEPOINT)
-                    _glfwInputChar(window, codepoint, mods, plain);
-            }
-
+            // Evdev handles keyboard input; X11 KeyPress path frozen
             return;
         }
 
         case KeyRelease:
         {
-            const int key = translateKey(keycode);
-            const int mods = translateState(event->xkey.state);
-
-            if (!_glfw.x11.xkb.detectable)
-            {
-                // HACK: Key repeat events will arrive as KeyRelease/KeyPress
-                //       pairs with similar or identical time stamps
-                //       The key repeat logic in _glfwInputKey expects only key
-                //       presses to repeat, so detect and discard release events
-                if (XEventsQueued(_glfw.x11.display, QueuedAfterReading))
-                {
-                    XEvent next;
-                    XPeekEvent(_glfw.x11.display, &next);
-
-                    if (next.type == KeyPress &&
-                        next.xkey.window == event->xkey.window &&
-                        next.xkey.keycode == keycode)
-                    {
-                        // HACK: The time of repeat events sometimes doesn't
-                        //       match that of the press event, so add an
-                        //       epsilon
-                        //       Toshiyuki Takahashi can press a button
-                        //       16 times per second so it's fairly safe to
-                        //       assume that no human is pressing the key 50
-                        //       times per second (value is ms)
-                        if ((next.xkey.time - event->xkey.time) < 20)
-                        {
-                            // This is very likely a server-generated key repeat
-                            // event, so ignore it
-                            return;
-                        }
-                    }
-                }
-            }
-
-            _glfwInputKey(window, key, keycode, GLFW_RELEASE, mods);
+            // Evdev handles keyboard input; X11 KeyRelease path frozen
             return;
         }
 
         case ButtonPress:
         {
-            const int mods = translateState(event->xbutton.state);
-
-            if (event->xbutton.button == Button1)
-                _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, mods);
-            else if (event->xbutton.button == Button2)
-                _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_MIDDLE, GLFW_PRESS, mods);
-            else if (event->xbutton.button == Button3)
-                _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS, mods);
-
-            // Modern X provides scroll events as mouse button presses
-            else if (event->xbutton.button == Button4)
-                _glfwInputScroll(window, 0.0, 1.0);
-            else if (event->xbutton.button == Button5)
-                _glfwInputScroll(window, 0.0, -1.0);
-            else if (event->xbutton.button == Button6)
-                _glfwInputScroll(window, 1.0, 0.0);
-            else if (event->xbutton.button == Button7)
-                _glfwInputScroll(window, -1.0, 0.0);
-
-            else
-            {
-                // Additional buttons after 7 are treated as regular buttons
-                // We subtract 4 to fill the gap left by scroll input above
-                _glfwInputMouseClick(window,
-                                     event->xbutton.button - Button1 - 4,
-                                     GLFW_PRESS,
-                                     mods);
-            }
-
+            // Evdev handles mouse input; X11 ButtonPress path frozen
             return;
         }
 
         case ButtonRelease:
         {
-            const int mods = translateState(event->xbutton.state);
-
-            if (event->xbutton.button == Button1)
-            {
-                _glfwInputMouseClick(window,
-                                     GLFW_MOUSE_BUTTON_LEFT,
-                                     GLFW_RELEASE,
-                                     mods);
-            }
-            else if (event->xbutton.button == Button2)
-            {
-                _glfwInputMouseClick(window,
-                                     GLFW_MOUSE_BUTTON_MIDDLE,
-                                     GLFW_RELEASE,
-                                     mods);
-            }
-            else if (event->xbutton.button == Button3)
-            {
-                _glfwInputMouseClick(window,
-                                     GLFW_MOUSE_BUTTON_RIGHT,
-                                     GLFW_RELEASE,
-                                     mods);
-            }
-            else if (event->xbutton.button > Button7)
-            {
-                // Additional buttons after 7 are treated as regular buttons
-                // We subtract 4 to fill the gap left by scroll input above
-                _glfwInputMouseClick(window,
-                                     event->xbutton.button - Button1 - 4,
-                                     GLFW_RELEASE,
-                                     mods);
-            }
-
+            // Evdev handles mouse input; X11 ButtonRelease path frozen
             return;
         }
 
@@ -1456,34 +1258,7 @@ static void processEvent(XEvent *event)
 
         case MotionNotify:
         {
-            const int x = event->xmotion.x;
-            const int y = event->xmotion.y;
-
-            if (x != window->x11.warpCursorPosX ||
-                y != window->x11.warpCursorPosY)
-            {
-                // The cursor was moved by something other than GLFW
-
-                if (window->cursorMode == GLFW_CURSOR_DISABLED)
-                {
-                    if (_glfw.x11.disabledCursorWindow != window)
-                        return;
-                    if (window->rawMouseMotion)
-                        return;
-
-                    const int dx = x - window->x11.lastCursorPosX;
-                    const int dy = y - window->x11.lastCursorPosY;
-
-                    _glfwInputCursorPos(window,
-                                        window->virtualCursorPosX + dx,
-                                        window->virtualCursorPosY + dy);
-                }
-                else
-                    _glfwInputCursorPos(window, x, y);
-            }
-
-            window->x11.lastCursorPosX = x;
-            window->x11.lastCursorPosY = y;
+            // Evdev handles mouse motion; X11 MotionNotify path frozen
             return;
         }
 
@@ -2813,6 +2588,26 @@ void _glfwPollEventsX11(void)
     if (_glfw.joysticksInitialized)
         _glfwDetectJoystickConnectionLinux();
 #endif
+
+    // Poll evdev keyboard/mouse input first (lower latency path)
+    // Find the focused window to deliver events to
+    {
+        _GLFWwindow* target = _glfw.windowListHead;
+        Window xfocus;
+        int revertTo;
+        XGetInputFocus(_glfw.x11.display, &xfocus, &revertTo);
+
+        for (_GLFWwindow* w = _glfw.windowListHead; w; w = w->next)
+        {
+            if (w->x11.handle == xfocus)
+            {
+                target = w;
+                break;
+            }
+        }
+        _glfwPollEvdevInput(target);
+    }
+
     XPending(_glfw.x11.display);
 
     while (QLength(_glfw.x11.display))
