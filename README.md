@@ -12,8 +12,18 @@ creating windows, contexts and surfaces, reading input, handling events, etc.
 GLFW is written primarily in C99, with parts of macOS support being written in
 Objective-C.
 
-GLFW supports Windows, macOS and Linux, and also works on many other Unix-like
-systems.  On Linux both Wayland and X11 are supported.
+**This branch relies on the Linux evdev input driver (no libinput).**
+To enable mouse and keyboard, you must set the following environment variables to the correct device files:
+
+```bash
+GLFW_EVDEV_MOUSE=/dev/input/eventX \
+GLFW_EVDEV_KEYBOARD=/dev/input/eventY \
+./your_program
+``` 
+Accessing /dev/input/event* normally requires root privileges or membership in the input group.
+To avoid running as root, add your user to the input group:
+`sudo usermod -a -G input $USER`
+Then log out and back in for the change to take effect.  
 
 GLFW is licensed under the [zlib/libpng
 license](https://www.glfw.org/license.html).
